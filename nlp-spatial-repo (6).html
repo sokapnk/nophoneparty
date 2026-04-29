@@ -1,0 +1,1975 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>NLP — Spatial Repo · CRDT Sync</title>
+
+    <!-- ── PWA Manifest ── -->
+    <link rel="manifest" href="./manifest.json">
+
+    <!-- ── PWA Meta Tags ── -->
+    <meta name="theme-color" content="#2b2520">
+    <meta name="background-color" content="#1a1714">
+    <meta name="application-name" content="NLP Spatial Repo">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="NLP">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="msapplication-TileColor" content="#2b2520">
+    <meta name="msapplication-navbutton-color" content="#2b2520">
+
+    <!-- ── PWA Icons ── -->
+    <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="./icon-512.png">
+    <link rel="apple-touch-icon" href="./icon-192.png">
+
+    <!-- ── Fonts ── -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* ── color tokens ── */
+            --bg-mid: #c9c1b2;
+            --bg-light: #e2d9ca;
+            --panel: #f0ebe0;
+            --surface: #ece5d9;
+            --ink: #0f1a20;
+            --accent-red: #d14030;
+            --accent-yellow: #e8b000;
+            --accent-orange: #e07020;
+            --accent-green: #4a8030;
+            --muted: #6f7a80;
+            --border: #3a3430;
+            --structural: #2b2520;
+            --cream: #f5f3f0;
+            --stroke: #0f1a20;
+
+            /* ── spacing tokens (4px scale) ── */
+            --s1: 4px;
+            --s2: 8px;
+            --s3: 12px;
+            --s4: 16px;
+            --s5: 24px;
+            --s6: 32px;
+
+            /* ── font stack (industrial monospace) ── */
+            --font-mono: 'Space Mono', 'IBM Plex Mono', 'Courier New', monospace;
+
+            /* ── radar colors (cream palette) ── */
+            --radar-bg: var(--panel);
+            --radar-ring: var(--border);
+            --radar-cross: var(--border);
+            --radar-blip: var(--accent-orange);
+            --radar-blip-bright: var(--accent-red);
+            --radar-text: var(--structural);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            background: #1a1714;
+            font-family: var(--font-mono);
+            font-size: 14px;
+            line-height: 1.6;
+            color: var(--ink);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            letter-spacing: 0.02em;
+        }
+
+        @media (min-width: 480px) {
+            html { font-size: 15px; }
+        }
+
+        body {
+            display: flex;
+            justify-content: center;
+            min-height: 100vh;
+            background: transparent;
+            padding: 0;
+        }
+
+        /* ── APP SHELL ── */
+        #app {
+            width: 100%;
+            max-width: 420px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow-x: hidden;
+            border-left: 3px solid var(--structural);
+            border-right: 3px solid var(--structural);
+            background: var(--bg-light);
+        }
+
+        @media (min-width: 480px) {
+            #app { max-width: 520px; }
+        }
+
+        /* ── CHISEL UTILITY (black stroke on angled panels) ── */
+        .chisel {
+            position: relative;
+            background: transparent;
+            clip-path: var(--clip-panel);
+        }
+        .chisel::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: var(--chisel-bg, var(--panel));
+            clip-path: inherit;
+            filter: drop-shadow(2px 0 0 var(--stroke)) drop-shadow(-2px 0 0 var(--stroke)) drop-shadow(0 2px 0 var(--stroke)) drop-shadow(0 -2px 0 var(--stroke));
+            z-index: -1;
+            pointer-events: none;
+        }
+
+        /* ── HEADER ── */
+        header {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            --clip-panel: polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 14px) 100%, 0 100%, 0 0);
+            --chisel-bg: var(--structural);
+            border-bottom: 3px solid var(--structural);
+        }
+        header .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: var(--s3) var(--s4);
+            position: relative;
+            z-index: 1;
+        }
+        header .label {
+            font-weight: 700;
+            font-size: 1.4rem;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--accent-yellow);
+        }
+        header .time-display {
+            font-size: 0.9rem;
+            color: var(--bg-light);
+            letter-spacing: 0.05em;
+        }
+
+        /* ── CRDT BADGE ── */
+        .crdt-badge {
+            font-size: 0.55rem;
+            font-weight: 700;
+            color: var(--accent-green);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            opacity: 0.85;
+            margin-right: var(--s2);
+        }
+
+        /* ── RADAR MAP ── */
+        #map-container {
+            flex-shrink: 0;
+            margin: 0;
+            border: 3px solid var(--structural);
+            overflow: hidden;
+            position: relative;
+            z-index: 1;
+            background: var(--panel);
+        }
+        #map-canvas {
+            display: block;
+            width: 100%;
+            height: 240px;
+            position: relative;
+            z-index: 1;
+        }
+        @media (min-width: 480px) {
+            #map-canvas { height: 260px; }
+        }
+        .map-label {
+            position: absolute;
+            font-size: 0.6rem;
+            color: var(--structural);
+            letter-spacing: 0.08em;
+            pointer-events: none;
+            text-transform: uppercase;
+            z-index: 2;
+            font-weight: 700;
+        }
+        .map-label-tl { top: var(--s2); left: var(--s2); }
+        .map-label-br { bottom: var(--s2); right: var(--s2); }
+
+        /* ── MODE BAR ── */
+        .mode-bar {
+            display: flex;
+            border-bottom: 3px solid var(--structural);
+            position: relative;
+            z-index: 5;
+        }
+        .mode-btn {
+            flex: 1;
+            padding: var(--s2) var(--s3);
+            font-family: inherit;
+            font-weight: 700;
+            font-size: 0.75rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            border: 2px solid var(--structural);
+            background: var(--panel);
+            color: var(--muted);
+            cursor: pointer;
+            transition: all 0.1s;
+        }
+        .mode-btn.active {
+            background: var(--structural);
+            color: var(--accent-yellow);
+            border-bottom-color: var(--accent-yellow);
+        }
+        .mode-btn:hover:not(.active) { background: var(--surface); }
+
+        /* ── MODE CONTENT ── */
+        .mode-content {
+            flex: 1;
+            overflow-y: auto;
+            position: relative;
+            z-index: 1;
+        }
+        .mode-panel {
+            display: none;
+        }
+        .mode-panel.active {
+            display: block;
+        }
+
+        /* ── REPO LIST ── */
+        #repo-list {
+            padding: var(--s2) var(--s3) var(--s2);
+            max-height: calc(100vh - 380px);
+            overflow-y: auto;
+        }
+        @media (min-width: 480px) {
+            #repo-list { max-height: calc(100vh - 400px); }
+        }
+        .repo-row {
+            --clip-panel: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 10px 100%, 0 calc(100% - 10px));
+            --chisel-bg: var(--panel);
+            margin-bottom: var(--s2);
+            cursor: pointer;
+            transition: background-color 0.1s;
+            border: 2px solid var(--border);
+        }
+        .repo-row-body {
+            display: grid;
+            grid-template-columns: 56px 1fr auto auto;
+            grid-template-rows: auto auto;
+            gap: var(--s1) var(--s2);
+            align-items: start;
+            padding: var(--s3) var(--s4);
+            position: relative;
+            z-index: 1;
+        }
+        .repo-row .row-time {
+            font-weight: 700;
+            font-size: 1.05rem;
+            grid-row: 1 / 3;
+            align-self: center;
+            color: var(--structural);
+            letter-spacing: 0.03em;
+        }
+        .repo-row .row-name {
+            font-weight: 700;
+            font-size: 0.95rem;
+            color: var(--ink);
+        }
+        .repo-row .row-coords {
+            font-size: 0.75rem;
+            color: var(--muted);
+            letter-spacing: 0.02em;
+            display: flex;
+            align-items: baseline;
+            gap: var(--s1);
+            flex-wrap: wrap;
+        }
+        .osm-link {
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: var(--accent-green);
+            text-decoration: none;
+            letter-spacing: 0.04em;
+            border: 2px solid var(--accent-green);
+            padding: 0 var(--s1);
+            display: inline-flex;
+            align-items: center;
+            background: transparent;
+            transition: color 0.1s, background 0.1s;
+            white-space: nowrap;
+        }
+        .osm-link:hover { background: var(--accent-green); color: #fff; }
+        .osm-link .icon {
+            width: 8px;
+            height: 8px;
+            margin-right: 2px;
+            stroke: currentColor;
+            stroke-width: 2;
+        }
+        .repo-row.selected { --chisel-bg: #faf5ea; }
+        .repo-row .row-index {
+            font-size: 0.65rem;
+            color: var(--muted);
+            opacity: 0.7;
+            align-self: center;
+            text-align: right;
+        }
+        .repo-row .row-desc {
+            font-size: 0.75rem;
+            color: var(--muted);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            grid-column: 1 / -1;
+        }
+        .del-btn {
+            cursor: pointer;
+            background: var(--accent-red);
+            color: #fff;
+            border: 2px solid var(--structural);
+            font-family: inherit;
+            font-weight: 700;
+            font-size: 0.55rem;
+            padding: 2px 5px;
+            letter-spacing: 0.08em;
+            transition: background-color 0.15s;
+            text-transform: uppercase;
+        }
+        .del-btn:hover { background: var(--structural); color: var(--accent-yellow); }
+
+        /* ── BACK BUTTON (for ticket view in LIST mode) ── */
+        .back-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--s1);
+            cursor: pointer;
+            background: var(--structural);
+            color: var(--accent-yellow);
+            border: 2px solid var(--structural);
+            font-family: inherit;
+            font-weight: 700;
+            font-size: 0.75rem;
+            padding: var(--s2) var(--s3);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin: var(--s2) var(--s3);
+            transition: background-color 0.15s, color 0.15s;
+        }
+        .back-btn:hover { background: var(--accent-orange); color: #fff; }
+        .back-btn .icon {
+            width: 10px;
+            height: 10px;
+            stroke: currentColor;
+            stroke-width: 2.5;
+            transform: rotate(180deg);
+        }
+
+        /* ── EDIT PANEL ── */
+        .edit-mode-bar {
+            display: flex;
+            align-items: center;
+            gap: var(--s2);
+            padding: var(--s2) var(--s3);
+            border-bottom: 2px solid var(--border);
+            background: var(--panel);
+        }
+        .edit-mode-label {
+            font-weight: 700;
+            font-size: 0.75rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+        .add-btn {
+            cursor: pointer;
+            background: var(--structural);
+            color: var(--accent-yellow);
+            border: 2px solid var(--structural);
+            font-family: inherit;
+            font-weight: 700;
+            font-size: 0.75rem;
+            padding: var(--s1) var(--s3);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            transition: background-color 0.15s, color 0.15s;
+            display: inline-flex;
+            align-items: center;
+            gap: var(--s1);
+        }
+        .add-btn:hover { background: var(--accent-orange); color: #fff; }
+        .add-btn:active { background: var(--accent-red); }
+        .add-btn .icon {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            stroke: currentColor;
+            stroke-width: 2.5;
+        }
+        #edit-panel {
+            margin: 0 var(--s3) var(--s3);
+            border: 2px solid var(--structural);
+            background: var(--surface);
+        }
+        .edit-panel-inner {
+            padding: var(--s4);
+            position: relative;
+            z-index: 1;
+        }
+        #edit-panel label {
+            display: block;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--muted);
+            margin-bottom: var(--s1);
+            margin-top: var(--s3);
+        }
+        #edit-panel label:first-child { margin-top: 0; }
+        #edit-panel input {
+            width: 100%;
+            padding: var(--s2) var(--s3);
+            font-family: inherit;
+            font-size: 0.85rem;
+            background: #faf8f3;
+            border: 2px solid var(--border);
+            color: var(--ink);
+            outline: none;
+        }
+        #edit-panel input:focus { border-color: var(--accent-orange); background: #fffef9; }
+        #edit-panel textarea {
+            width: 100%;
+            padding: var(--s2) var(--s3);
+            font-family: inherit;
+            font-size: 0.85rem;
+            background: #faf8f3;
+            border: 2px solid var(--border);
+            color: var(--ink);
+            outline: none;
+            resize: vertical;
+        }
+        #edit-panel textarea:focus { border-color: var(--accent-orange); background: #fffef9; }
+        .update-btn {
+            margin-top: var(--s4);
+            cursor: pointer;
+            background: var(--structural);
+            color: var(--accent-yellow);
+            border: 2px solid var(--structural);
+            font-family: inherit;
+            font-weight: 700;
+            font-size: 0.85rem;
+            padding: var(--s3) var(--s5);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            transition: background-color 0.15s, color 0.15s;
+            width: 100%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--s2);
+        }
+        .update-btn:hover { background: var(--accent-green); color: #fff; }
+        .update-btn:active { background: var(--accent-red); color: #fff; }
+        .update-btn .icon { width: 14px; height: 14px; stroke: currentColor; stroke-width: 2.5; }
+
+        /* ── EXPORT PANEL ── */
+        #export-panel {
+            margin: 0 var(--s3) var(--s3);
+            border: 2px solid var(--structural);
+            background: var(--surface);
+        }
+        .export-panel-inner {
+            padding: var(--s4);
+            position: relative;
+            z-index: 1;
+        }
+
+        /* ── IMPORT PANEL ── */
+        #import-panel {
+            margin: 0 var(--s3) var(--s3);
+            border: 2px solid var(--structural);
+            background: var(--surface);
+        }
+        .import-panel-inner {
+            padding: var(--s4);
+            position: relative;
+            z-index: 1;
+        }
+
+        /* ── TAB SELECTOR ── */
+        .tab-row {
+            display: flex;
+            gap: 2px;
+            margin-bottom: var(--s3);
+        }
+        .tab-btn {
+            flex: 1;
+            cursor: pointer;
+            background: var(--panel);
+            color: var(--muted);
+            border: 2px solid var(--border);
+            font-family: inherit;
+            font-weight: 700;
+            font-size: 0.65rem;
+            padding: var(--s2) var(--s2);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            transition: background-color 0.15s, color 0.15s;
+        }
+        .tab-btn.active {
+            background: var(--structural);
+            color: var(--accent-yellow);
+            border-color: var(--structural);
+        }
+        .tab-btn:hover:not(.active) { background: #d8d0c2; }
+
+        /* ── LOG AREA ── */
+        .log-area {
+            font-size: 0.6rem;
+            background: #1a1714;
+            color: #8a8278;
+            padding: var(--s2) var(--s3);
+            max-height: 70px;
+            overflow-y: auto;
+            line-height: 1.6;
+            margin-top: var(--s2);
+            border: 2px solid var(--border);
+            word-break: break-all;
+        }
+        .log-area .log-ok { color: var(--accent-green); }
+        .log-area .log-err { color: var(--accent-red); }
+        .log-area .log-warn { color: var(--accent-orange); }
+
+        /* ── SHARED PANEL ELEMENTS ── */
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            font-size: 0.75rem;
+            color: var(--muted);
+            margin-bottom: var(--s3);
+        }
+        .close-btn {
+            cursor: pointer;
+            background: none;
+            border: 2px solid var(--border);
+            color: var(--muted);
+            font-family: inherit;
+            font-size: 0.75rem;
+            padding: 2px 6px;
+            letter-spacing: 0.05em;
+            transition: color 0.1s, border-color 0.1s;
+        }
+        .close-btn:hover { color: var(--accent-red); border-color: var(--accent-red); }
+
+        #export-panel label, #import-panel label {
+            display: block;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--muted);
+            margin-bottom: var(--s1);
+            margin-top: var(--s3);
+        }
+        #export-panel label:first-child, #import-panel label:first-child { margin-top: 0; }
+
+        .magnet-display {
+            font-size: 0.65rem;
+            word-break: break-all;
+            background: #faf8f3;
+            border: 2px solid var(--border);
+            padding: var(--s2) var(--s3);
+            max-height: 90px;
+            overflow-y: auto;
+            color: var(--ink);
+            line-height: 1.5;
+        }
+
+        #import-panel input {
+            width: 100%;
+            padding: var(--s2) var(--s3);
+            font-family: inherit;
+            font-size: 0.75rem;
+            background: #faf8f3;
+            border: 2px solid var(--border);
+            color: var(--ink);
+            outline: none;
+        }
+        #import-panel input:focus { border-color: var(--accent-orange); background: #fffef9; }
+
+        .copy-btn, .download-btn {
+            margin-top: var(--s3);
+            cursor: pointer;
+            background: var(--structural);
+            color: var(--accent-yellow);
+            border: 2px solid var(--structural);
+            font-family: inherit;
+            font-weight: 700;
+            font-size: 0.8rem;
+            padding: var(--s2) var(--s4);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            transition: background-color 0.15s, color 0.15s;
+            width: 100%;
+        }
+        .copy-btn:hover, .download-btn:hover { background: var(--accent-green); color: #fff; }
+        .copy-btn:active, .download-btn:active { background: var(--accent-red); color: #fff; }
+        .copy-btn:disabled, .download-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .status-text {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+            margin-top: var(--s2);
+        }
+        .status-text.success { color: var(--accent-green); font-weight: 700; }
+        .status-text.error { color: var(--accent-red); font-weight: 700; }
+        .status-text.loading { color: var(--accent-orange); }
+
+        /* ── TICKET ── */
+        #ticket-view {
+            margin: 0 var(--s3) var(--s3);
+            border: 2px solid var(--structural);
+            background: var(--cream);
+        }
+        .ticket-inner {
+            padding: var(--s5) var(--s4);
+            position: relative;
+            z-index: 1;
+        }
+        .ticket-name {
+            font-weight: 700;
+            font-size: 1.3rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--structural);
+        }
+        .ticket-code {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: var(--accent-red);
+            letter-spacing: 0.15em;
+            margin: var(--s2) 0;
+            word-break: break-all;
+        }
+        .ticket-meta {
+            font-size: 0.75rem;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin: var(--s1) 0;
+            display: flex;
+            align-items: center;
+            gap: var(--s2);
+            flex-wrap: wrap;
+        }
+        .ticket-nocap {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--s1);
+            background: var(--structural);
+            color: var(--accent-yellow);
+            font-weight: 700;
+            font-size: 0.7rem;
+            padding: var(--s1) var(--s3);
+            letter-spacing: 0.1em;
+            border: 2px solid var(--structural);
+            margin: var(--s2) 0;
+        }
+        .ticket-nocap .icon { width: 14px; height: 14px; stroke: currentColor; stroke-width: 3; }
+        .checkin-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--s2);
+            width: 100%;
+            margin-top: var(--s4);
+            cursor: pointer;
+            background: var(--accent-red);
+            color: #fff;
+            border: 2px solid var(--structural);
+            font-family: inherit;
+            font-weight: 700;
+            font-size: 0.95rem;
+            padding: var(--s3) var(--s5);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            transition: background-color 0.15s;
+        }
+        .checkin-btn:hover { background: var(--accent-orange); }
+        .checkin-btn:active { background: var(--structural); color: var(--accent-yellow); }
+        .checkin-btn .icon { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2.5; }
+        .ticket-perf {
+            position: absolute;
+            top: var(--s3);
+            right: var(--s4);
+            font-size: 0.6rem;
+            color: var(--muted);
+            letter-spacing: 0.05em;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            z-index: 1;
+        }
+        .osm-link-ticket {
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: var(--accent-green);
+            text-decoration: none;
+            letter-spacing: 0.04em;
+            border: 2px solid var(--accent-green);
+            padding: var(--s1) var(--s2);
+            background: transparent;
+            display: inline-flex;
+            align-items: center;
+            gap: 2px;
+            white-space: nowrap;
+        }
+        .osm-link-ticket:hover { background: var(--accent-green); color: #fff; }
+
+        /* ── CONFIRMATION ── */
+        #confirmation {
+            display: none;
+            margin: 0 var(--s3) var(--s4);
+            --clip-panel: polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 16px 100%, 0 calc(100% - 16px));
+            --chisel-bg: var(--structural);
+            flex-shrink: 0;
+            position: relative;
+            z-index: 10;
+            color: var(--accent-green);
+            font-weight: 700;
+            font-size: 1.1rem;
+            text-align: center;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            line-height: 1.7;
+        }
+        #confirmation.visible { display: block; animation: pulse-stroke 1.8s ease-in-out infinite; }
+        .conf-inner { padding: var(--s5) var(--s4); position: relative; z-index: 1; }
+        @keyframes pulse-stroke {
+            0%, 100% { filter: drop-shadow(2px 0 0 var(--accent-green)) drop-shadow(-2px 0 0 var(--accent-green)) drop-shadow(0 2px 0 var(--accent-green)) drop-shadow(0 -2px 0 var(--accent-green)); }
+            50% { filter: drop-shadow(2px 0 0 var(--accent-yellow)) drop-shadow(-2px 0 0 var(--accent-yellow)) drop-shadow(0 2px 0 var(--accent-yellow)) drop-shadow(0 -2px 0 var(--accent-yellow)); }
+        }
+        .conf-accent { color: var(--accent-yellow); font-size: 1.4rem; display: block; margin-top: var(--s1); }
+
+        /* ── EMPTY STATE ── */
+        .empty-state {
+            text-align: center;
+            padding: var(--s5) var(--s4);
+            color: var(--muted);
+            font-size: 0.8rem;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            border: 2px dashed var(--border);
+            margin: var(--s3);
+            background: var(--panel);
+        }
+
+        /* ── SCROLLBAR ── */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg-mid); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 0; }
+
+        /* ── LOADING OVERLAY ── */
+        #loading-overlay {
+            position: fixed;
+            inset: 0;
+            background: var(--structural);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            color: var(--accent-yellow);
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            transition: opacity 0.4s;
+        }
+        #loading-overlay.hidden { opacity: 0; pointer-events: none; }
+
+        /* ── SYNC PANEL COMBINED ── */
+        .sync-section {
+            border: 2px solid var(--structural);
+            margin: 0 var(--s3) var(--s3);
+            background: var(--surface);
+        }
+        .sync-section-inner {
+            padding: var(--s4);
+        }
+        .sync-section-title {
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            font-size: 0.75rem;
+            color: var(--structural);
+            margin-bottom: var(--s3);
+            padding-bottom: var(--s1);
+            border-bottom: 2px solid var(--border);
+        }
+    </style>
+</head>
+<body>
+    <!-- loading overlay -->
+    <div id="loading-overlay">Initializing CRDT...</div>
+
+    <!-- hidden SVG icon set (modern monochrome) -->
+    <svg xmlns="http://www.w3.org/2000/svg" style="display:none;" aria-hidden="true">
+        <defs>
+            <g id="icon-plus">
+                <line x1="5" y1="0" x2="5" y2="10" stroke="currentColor" stroke-width="2.5" stroke-linecap="square"/>
+                <line x1="0" y1="5" x2="10" y2="5" stroke="currentColor" stroke-width="2.5" stroke-linecap="square"/>
+            </g>
+            <g id="icon-check">
+                <polyline points="1,5 4,8 9,2" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter"/>
+            </g>
+            <g id="icon-arrow">
+                <line x1="2" y1="8" x2="8" y2="2" stroke="currentColor" stroke-width="2.5"/>
+                <polyline points="4,2 8,2 8,6" fill="none" stroke="currentColor" stroke-width="2.5"/>
+            </g>
+            <g id="icon-nocapture">
+                <line x1="0" y1="0" x2="10" y2="10" stroke="currentColor" stroke-width="3"/>
+                <line x1="10" y1="0" x2="0" y2="10" stroke="currentColor" stroke-width="3"/>
+            </g>
+            <g id="icon-arrow-up">
+                <line x1="5" y1="8" x2="5" y2="2" stroke="currentColor" stroke-width="2.5"/>
+                <polyline points="2,5 5,2 8,5" fill="none" stroke="currentColor" stroke-width="2.5"/>
+            </g>
+            <g id="icon-arrow-down">
+                <line x1="5" y1="2" x2="5" y2="8" stroke="currentColor" stroke-width="2.5"/>
+                <polyline points="2,5 5,8 8,5" fill="none" stroke="currentColor" stroke-width="2.5"/>
+            </g>
+            <g id="icon-del">
+                <line x1="2" y1="2" x2="8" y2="8" stroke="currentColor" stroke-width="2.5" stroke-linecap="square"/>
+                <line x1="8" y1="2" x2="2" y2="8" stroke="currentColor" stroke-width="2.5" stroke-linecap="square"/>
+            </g>
+        </defs>
+    </svg>
+
+    <div id="app">
+        <header class="chisel">
+            <div class="header-content">
+                <span class="label">NLP</span>
+                <div style="display:flex;align-items:center;">
+                    <span class="crdt-badge" id="crdt-status">CRDT</span>
+                    <span class="time-display" id="header-time">--:--</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- RADAR MAP - first element after header -->
+        <div id="map-container">
+            <canvas id="map-canvas"></canvas>
+            <span class="map-label map-label-tl">RADAR</span>
+            <span class="map-label map-label-br" id="map-coord-label">—</span>
+        </div>
+
+        <!-- MODE BAR -->
+        <div class="mode-bar">
+            <button class="mode-btn active" id="mode-list" data-mode="list">LIST</button>
+            <button class="mode-btn" id="mode-edit" data-mode="edit">EDIT</button>
+            <button class="mode-btn" id="mode-sync" data-mode="sync">SYNC</button>
+        </div>
+
+        <!-- MODE CONTENT AREA -->
+        <div class="mode-content">
+
+            <!-- LIST MODE -->
+            <div class="mode-panel active" id="panel-list">
+                <div id="repo-list"></div>
+                <div id="ticket-view" style="display:none;">
+                    <button class="back-btn" id="btn-back">
+                        <svg class="icon" viewBox="0 0 10 10"><use href="#icon-arrow"/></svg> BACK
+                    </button>
+                    <div class="ticket-inner">
+                        <span class="ticket-perf">TICKET</span>
+                        <div class="ticket-name" id="ticket-name">—</div>
+                        <div class="ticket-code" id="ticket-code">————</div>
+                        <div class="ticket-meta" id="ticket-time">—</div>
+                        <div class="ticket-meta" id="ticket-coords">
+                            <span>—</span>
+                            <a class="osm-link-ticket" id="ticket-osm" href="#" target="_blank">
+                                <svg class="icon" width="8" height="8" viewBox="0 0 10 10"><use href="#icon-arrow"/></svg> OSM
+                            </a>
+                        </div>
+                        <div class="ticket-meta" id="ticket-desc">—</div>
+                        <span class="ticket-nocap">
+                            <svg class="icon" viewBox="0 0 10 10"><use href="#icon-nocapture"/></svg> NO CAPTURE
+                        </span>
+                        <button class="checkin-btn" id="btn-checkin">
+                            <svg class="icon" viewBox="0 0 10 10"><use href="#icon-check"/></svg> CHECK IN
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- EDIT MODE -->
+            <div class="mode-panel" id="panel-edit">
+                <div class="edit-mode-bar">
+                    <button class="add-btn" id="btn-add-new">
+                        <svg class="icon" viewBox="0 0 10 10"><use href="#icon-plus"/></svg> NEW
+                    </button>
+                    <span class="edit-mode-label" id="edit-mode-label">NEW EVENT</span>
+                </div>
+                <div id="edit-panel" style="display:block;margin:0;border:none;background:transparent;">
+                    <div class="edit-panel-inner" style="padding:var(--s3);">
+                        <label for="edit-name">Name</label>
+                        <input type="text" id="edit-name" placeholder="EVENT NAME" autocomplete="off">
+                        <label for="edit-time">Time (HH:MM)</label>
+                        <input type="text" id="edit-time" placeholder="21:30" autocomplete="off">
+                        <label for="edit-coords">GPS (lon, lat)</label>
+                        <input type="text" id="edit-coords" placeholder="-74.006,40.7128" autocomplete="off">
+                        <label for="edit-desc">Description</label>
+                        <textarea id="edit-desc" placeholder="Event description..." rows="2"></textarea>
+                        <button class="update-btn" id="btn-update">
+                            <svg class="icon" viewBox="0 0 10 10"><use href="#icon-check"/></svg> UPDATE
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SYNC MODE -->
+            <div class="mode-panel" id="panel-sync">
+                <!-- EXPORT SECTION -->
+                <div class="sync-section">
+                    <div class="sync-section-inner">
+                        <div class="sync-section-title">EXPORT</div>
+                        <div class="tab-row">
+                            <button class="tab-btn active" id="tab-export-b64" data-tab="b64">BASE64</button>
+                            <button class="tab-btn" id="tab-export-wt" data-tab="wt">TORRENT</button>
+                        </div>
+                        <!-- Base64 export -->
+                        <div id="export-b64-section">
+                            <label>CRDT VECTOR (BASE64)</label>
+                            <div class="magnet-display" id="b64-uri"></div>
+                            <button class="copy-btn" id="btn-copy-b64">COPY</button>
+                        </div>
+                        <!-- WebTorrent export -->
+                        <div id="export-wt-section" style="display:none">
+                            <div id="export-status" class="status-text">Idle</div>
+                            <div id="export-magnet-section" style="display:none">
+                                <label>MAGNET URI</label>
+                                <div class="magnet-display" id="magnet-uri"></div>
+                                <button class="copy-btn" id="btn-copy-magnet">COPY MAGNET</button>
+                            </div>
+                            <div class="log-area" id="export-log"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- IMPORT SECTION -->
+                <div class="sync-section">
+                    <div class="sync-section-inner">
+                        <div class="sync-section-title">IMPORT</div>
+                        <div class="tab-row">
+                            <button class="tab-btn active" id="tab-import-b64" data-tab="b64">BASE64</button>
+                            <button class="tab-btn" id="tab-import-wt" data-tab="wt">TORRENT</button>
+                        </div>
+                        <!-- Base64 import -->
+                        <div id="import-b64-section">
+                            <label for="import-b64-input">CRDT VECTOR (BASE64)</label>
+                            <textarea id="import-b64-input" placeholder="Paste base64 string here..." rows="3" style="width:100%;padding:var(--s2) var(--s3);font-family:inherit;font-size:0.65rem;background:#faf8f3;border:2px solid var(--border);color:var(--ink);outline:none;resize:vertical;"></textarea>
+                            <button class="download-btn" id="btn-import-b64">MERGE</button>
+                            <div id="import-b64-status" class="status-text"></div>
+                        </div>
+                        <!-- WebTorrent import -->
+                        <div id="import-wt-section" style="display:none">
+                            <label for="import-magnet-input">MAGNET URI</label>
+                            <input type="text" id="import-magnet-input" placeholder="magnet:?xt=urn:btih:..." autocomplete="off">
+                            <button class="download-btn" id="btn-download">DOWNLOAD</button>
+                            <div id="import-status" class="status-text"></div>
+                            <div class="log-area" id="import-log"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- /mode-content -->
+
+        <!-- CONFIRMATION OVERLAY (appears on top of whatever mode) -->
+        <div id="confirmation" class="chisel">
+            <div class="conf-inner">
+                YOU'RE IN.<br><span class="conf-accent">SEE YOU SOON.</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- WebTorrent browser bundle -->
+    <script src="https://cdn.jsdelivr.net/npm/webtorrent@1.9.7/webtorrent.min.js"></script>
+
+    <!-- ── PWA Service Worker Registration ── -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(reg => console.log('[SW] Registered, scope:', reg.scope))
+                    .catch(err => console.warn('[SW] Registration failed:', err));
+            });
+        }
+    </script>
+
+    <script type="module">
+        // ── Yjs CRDT Import ──
+        import * as Y from 'https://esm.sh/yjs@13.6.24'
+
+        // ── Yjs Document ──
+        const ydoc = new Y.Doc()
+        const yparties = ydoc.getArray('parties')
+
+        // Seed initial data if empty
+        if (yparties.length === 0) {
+            ydoc.transact(() => {
+                const seed = [
+                    { name: 'WAREHOUSE FREQ', time: '21:30', coords: [-73.9855, 40.7484], description: 'Underground frequency modulation session in converted warehouse space' },
+                    { name: 'BRIDGE PULSE', time: '22:00', coords: [-73.9780, 40.7527], description: 'Pulsating rhythms beneath the overpass, open air gathering' },
+                    { name: 'CANAL RITUAL', time: '23:15', coords: [-73.9910, 40.7450], description: 'Waterfront ceremonial gathering, immersive sound experience' },
+                    { name: 'ROOFTOP STATIC', time: '00:30', coords: [-73.9812, 40.7580], description: 'High altitude static noise session, above the skyline' },
+                ]
+                seed.forEach(ev => {
+                    const ym = new Y.Map()
+                    ym.set('name', ev.name)
+                    ym.set('time', ev.time)
+                    const yc = new Y.Array()
+                    yc.push(ev.coords)
+                    ym.set('coords', yc)
+                    ym.set('description', ev.description || '')
+                    yparties.push([ym])
+                })
+            })
+        }
+
+        // ── Helper: read events from Yjs CRDT ──
+        function getEvents() {
+            return yparties.toArray().map(ym => ({
+                name: ym.get('name') || 'UNTITLED',
+                time: ym.get('time') || '00:00',
+                coords: (ym.get('coords') && ym.get('coords').toArray()) || [0, 0],
+                description: ym.get('description') || ''
+            }))
+        }
+
+        // ── WebTorrent Trackers ──
+        const WT_TRACKERS = [
+            'wss://tracker.openwebtorrent.com',
+            'wss://tracker.webtorrent.dev',
+        ]
+
+        // ── WebTorrent Client ──
+        let wtClient = null
+        let currentSeed = null
+
+        function getWT() {
+            if (!wtClient && window.WebTorrent) {
+                wtClient = new window.WebTorrent({
+                    tracker: {
+                        announce: WT_TRACKERS,
+                    },
+                    dht: false,  // browsers can't do DHT, WebRTC-only
+                })
+                wtClient.on('error', err => {
+                    console.error('[WebTorrent client error]', err)
+                })
+            }
+            return wtClient
+        }
+
+        // ── Log helper ──
+        function logTo(el, msg, cls) {
+            if (!el) return
+            const d = document.createElement('div')
+            if (cls) d.className = cls
+            const t = new Date()
+            d.textContent = '[' + String(t.getMinutes()).padStart(2,'0') + ':' + String(t.getSeconds()).padStart(2,'0') + '] ' + msg
+            el.appendChild(d)
+            el.scrollTop = el.scrollHeight
+        }
+
+        // ── App State (UI only, data lives in Yjs) ──
+        const state = {
+            selectedIndex: null,
+            showTicket: false,
+            checked: false,
+            editIsNew: false,
+            currentMode: 'list', // 'list' | 'edit' | 'sync'
+        }
+
+        // ── DOM References ──
+        const $ = s => document.querySelector(s)
+        const repoList = $('#repo-list')
+        const ticketView = $('#ticket-view')
+        const confirmation = $('#confirmation')
+        const mapCanvas = $('#map-canvas')
+        const mapCoordLabel = $('#map-coord-label')
+        const headerTime = $('#header-time')
+        const btnUpdate = $('#btn-update')
+        const btnCheckin = $('#btn-checkin')
+        const btnBack = $('#btn-back')
+        const inputName = $('#edit-name')
+        const inputTime = $('#edit-time')
+        const inputCoords = $('#edit-coords')
+        const inputDesc = $('#edit-desc')
+        const ticketOsmLink = $('#ticket-osm')
+        const btnCopyMagnet = $('#btn-copy-magnet')
+        const btnCopyB64 = $('#btn-copy-b64')
+        const btnDownload = $('#btn-download')
+        const btnImportB64 = $('#btn-import-b64')
+        const magnetDisplay = $('#magnet-uri')
+        const b64Display = $('#b64-uri')
+        const importInput = $('#import-magnet-input')
+        const importB64Input = $('#import-b64-input')
+        const exportStatus = $('#export-status')
+        const importStatus = $('#import-status')
+        const importB64Status = $('#import-b64-status')
+        const exportMagnetSection = $('#export-magnet-section')
+        const exportLog = $('#export-log')
+        const importLog = $('#import-log')
+        const crdtStatus = $('#crdt-status')
+        const loadingOverlay = $('#loading-overlay')
+
+        // ── Clock ──
+        function updateClock() {
+            const now = new Date()
+            headerTime.textContent = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0')
+        }
+        updateClock()
+        setInterval(updateClock, 15000)
+
+        // ── CRDT Status Badge ──
+        crdtStatus.textContent = 'CRDT \u25CF'
+
+        // ── Mode Switching ──
+        function setMode(mode) {
+            state.currentMode = mode
+            document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'))
+            document.querySelector('.mode-btn[data-mode="' + mode + '"]').classList.add('active')
+            document.querySelectorAll('.mode-panel').forEach(p => p.classList.remove('active'))
+            document.getElementById('panel-' + mode).classList.add('active')
+
+            if (mode === 'edit' && state.editIsNew) {
+                // If switching to edit mode for new event
+                inputName.value = ''; inputTime.value = ''; inputCoords.value = ''; inputDesc.value = ''
+                inputName.focus()
+            }
+            if (mode === 'sync') {
+                // Auto-generate base64 export
+                const b64 = generateB64Export()
+                b64Display.textContent = b64
+                // Reset WebTorrent section
+                exportMagnetSection.style.display = 'none'
+                magnetDisplay.textContent = ''
+                exportStatus.textContent = 'Idle — click TORRENT tab to seed'
+                exportStatus.className = 'status-text'
+            }
+            if (mode === 'list') {
+                if (state.showTicket && state.selectedIndex !== null) {
+                    showTicketInView()
+                } else {
+                    hideTicketInView()
+                }
+            }
+        }
+
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            btn.addEventListener('click', () => setMode(btn.dataset.mode))
+        })
+
+        // ── Ticket view helpers ──
+        function showTicketInView() {
+            repoList.style.display = 'none'
+            ticketView.style.display = 'block'
+        }
+        function hideTicketInView() {
+            repoList.style.display = ''
+            ticketView.style.display = 'none'
+        }
+
+        // ── Yjs Observer: re-render on any CRDT change ──
+        let renderTimer = null
+        function scheduleRender() {
+            clearTimeout(renderTimer)
+            renderTimer = setTimeout(() => {
+                renderRepoList()
+                renderRadarFrame()
+                // Keep ticket view in sync
+                if (state.showTicket && state.selectedIndex !== null) {
+                    const events = getEvents()
+                    if (state.selectedIndex >= events.length) {
+                        state.selectedIndex = null
+                        state.showTicket = false
+                        hideTicketInView()
+                    } else {
+                        renderTicket()
+                    }
+                }
+            }, 50)
+        }
+        yparties.observeDeep(scheduleRender)
+
+        // ════════════════════════════════════════════
+        // ── RADAR MAP RENDERING ──
+        // ════════════════════════════════════════════
+
+        let userLat = null
+        let userLon = null
+        // Radar rendering (no animation loop — static radar)
+
+        // Try to get user's geolocation
+        if (navigator.geolocation && navigator.geolocation.getCurrentPosition) {
+            navigator.geolocation.getCurrentPosition(
+                pos => {
+                    userLat = pos.coords.latitude
+                    userLon = pos.coords.longitude
+                    renderRadarFrame()
+                },
+                () => {
+                    // Geolocation denied or failed — will use fallback
+                    userLat = null
+                    userLon = null
+                },
+                { timeout: 8000, enableHighAccuracy: false }
+            )
+        }
+
+        // Redraw radar on resize
+        window.addEventListener('resize', () => {
+            clearTimeout(window._radarResizeTimer)
+            window._radarResizeTimer = setTimeout(renderRadarFrame, 100)
+        })
+
+        function getCenterPoint() {
+            const events = getEvents()
+            if (userLat !== null && userLon !== null) {
+                return { lat: userLat, lon: userLon, isUser: true }
+            }
+            if (events.length === 0) {
+                return { lat: 40.7484, lon: -73.9855, isUser: false }
+            }
+            // Fallback: average of all event coords
+            let sumLat = 0, sumLon = 0
+            events.forEach(ev => { sumLat += ev.coords[1]; sumLon += ev.coords[0] })
+            return { lat: sumLat / events.length, lon: sumLon / events.length, isUser: false }
+        }
+
+        function haversineKm(lat1, lon1, lat2, lon2) {
+            const R = 6371
+            const dLat = (lat2 - lat1) * Math.PI / 180
+            const dLon = (lon2 - lon1) * Math.PI / 180
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon/2) * Math.sin(dLon/2)
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        }
+
+        // Store blip screen positions for click detection
+        let blipPositions = []
+
+        function renderRadarFrame() {
+            const events = getEvents()
+            const canvas = mapCanvas
+            const container = canvas.parentElement
+            const rect = container.getBoundingClientRect()
+            const w = rect.width
+            const h = parseInt(getComputedStyle(canvas).height) || 240
+            const dpr = Math.min(window.devicePixelRatio || 1, 2)
+            canvas.width = w * dpr
+            canvas.height = h * dpr
+            canvas.style.width = w + 'px'
+            canvas.style.height = h + 'px'
+            const ctx = canvas.getContext('2d')
+            ctx.setTransform(1, 0, 0, 1, 0, 0)
+            ctx.scale(dpr, dpr)
+
+            const cx = w / 2
+            const cy = h / 2
+            const maxR = Math.min(cx, cy) - 12
+
+            // ── Cream background ──
+            ctx.fillStyle = '#f0ebe0'
+            ctx.fillRect(0, 0, w, h)
+
+            // ── Concentric range rings ──
+            ctx.strokeStyle = 'rgba(58, 52, 48, 0.25)'
+            ctx.lineWidth = 1
+            const ringCount = 4
+            for (let i = 1; i <= ringCount; i++) {
+                const r = (maxR / ringCount) * i
+                ctx.beginPath()
+                ctx.arc(cx, cy, r, 0, Math.PI * 2)
+                ctx.stroke()
+            }
+
+            // ── Cross-hair lines ──
+            ctx.strokeStyle = 'rgba(58, 52, 48, 0.2)'
+            ctx.lineWidth = 1
+            ctx.beginPath()
+            ctx.moveTo(cx, 0); ctx.lineTo(cx, h)
+            ctx.moveTo(0, cy); ctx.lineTo(w, cy)
+            ctx.stroke()
+
+            // ── Diagonal cross-hairs (45°) ──
+            ctx.strokeStyle = 'rgba(58, 52, 48, 0.1)'
+            ctx.lineWidth = 0.5
+            ctx.beginPath()
+            const diag = Math.max(w, h)
+            ctx.moveTo(cx - diag, cy - diag); ctx.lineTo(cx + diag, cy + diag)
+            ctx.moveTo(cx + diag, cy - diag); ctx.lineTo(cx - diag, cy + diag)
+            ctx.stroke()
+
+            // ── Calculate positions ──
+            const center = getCenterPoint()
+            let maxDist = 0
+
+            // Calculate distances and angles for all events
+            const blips = events.map((ev, i) => {
+                const dist = haversineKm(center.lat, center.lon, ev.coords[1], ev.coords[0])
+                const dLon = ev.coords[0] - center.lon
+                const dLat = ev.coords[1] - center.lat
+                const angle = Math.atan2(dLon, dLat) // angle from north, clockwise
+                if (dist > maxDist) maxDist = dist
+                return { ...ev, dist, angle, index: i }
+            })
+
+            // Auto-scale: make sure all events fit within the rings
+            if (maxDist < 0.01) maxDist = 0.5
+            const rangeKm = maxDist * 1.3 // add 30% padding
+
+            // ── Center dot (user position or fallback) ──
+            ctx.fillStyle = center.isUser ? '#2b2520' : '#6f7a80'
+            ctx.beginPath()
+            ctx.arc(cx, cy, center.isUser ? 5 : 3, 0, Math.PI * 2)
+            ctx.fill()
+            // Ring around center
+            ctx.strokeStyle = center.isUser ? 'rgba(43,37,32,0.4)' : 'rgba(111,122,128,0.3)'
+            ctx.lineWidth = 1
+            ctx.beginPath()
+            ctx.arc(cx, cy, center.isUser ? 9 : 7, 0, Math.PI * 2)
+            ctx.stroke()
+            // Cross at center
+            ctx.strokeStyle = 'rgba(43,37,32,0.5)'
+            ctx.lineWidth = 1.5
+            ctx.beginPath()
+            ctx.moveTo(cx - 3, cy); ctx.lineTo(cx + 3, cy)
+            ctx.moveTo(cx, cy - 3); ctx.lineTo(cx, cy + 3)
+            ctx.stroke()
+
+            // ── Reset blip positions for click detection ──
+            blipPositions = []
+
+            // ── Party blips ──
+            blips.forEach((blip, i) => {
+                const normDist = Math.min(blip.dist / rangeKm, 1)
+                const px = cx + Math.sin(blip.angle) * normDist * maxR
+                const py = cy - Math.cos(blip.angle) * normDist * maxR
+
+                // Blip size: nearer = larger, selected = larger
+                const isSelected = state.selectedIndex === blip.index
+                let size = 4 + (1 - normDist) * 3
+                if (isSelected) size = 7
+
+                // Store position for click detection
+                blipPositions.push({ x: px, y: py, size: size, index: blip.index })
+
+                // Blip color: orange for normal, red for selected
+                if (isSelected) {
+                    // Selected: red fill with yellow pulse ring
+                    ctx.fillStyle = '#d14030'
+                    ctx.beginPath()
+                    ctx.arc(px, py, size, 0, Math.PI * 2)
+                    ctx.fill()
+
+                    // Black border on selected
+                    ctx.strokeStyle = '#2b2520'
+                    ctx.lineWidth = 2
+                    ctx.beginPath()
+                    ctx.arc(px, py, size, 0, Math.PI * 2)
+                    ctx.stroke()
+
+                    // Pulse ring
+                    ctx.strokeStyle = 'rgba(232, 176, 0, 0.5)'
+                    ctx.lineWidth = 1.5
+                    ctx.beginPath()
+                    ctx.arc(px, py, size + 5, 0, Math.PI * 2)
+                    ctx.stroke()
+                } else {
+                    // Normal: orange dot
+                    ctx.fillStyle = '#e07020'
+                    ctx.beginPath()
+                    ctx.arc(px, py, size, 0, Math.PI * 2)
+                    ctx.fill()
+
+                    // Thin dark border
+                    ctx.strokeStyle = 'rgba(43,37,32,0.6)'
+                    ctx.lineWidth = 1.5
+                    ctx.beginPath()
+                    ctx.arc(px, py, size, 0, Math.PI * 2)
+                    ctx.stroke()
+                }
+
+                // Blip label (abbreviated name)
+                const abbr = blip.name.replace(/[AEIOU]/g, '').slice(0, 4) || blip.name.slice(0, 3)
+                ctx.fillStyle = isSelected ? '#2b2520' : 'rgba(43,37,32,0.7)'
+                ctx.font = '9px "Space Mono","Courier New",monospace'
+                ctx.textAlign = 'left'
+                ctx.textBaseline = 'middle'
+                ctx.fillText(abbr, px + size + 4, py)
+            })
+
+            // ── Range label ──
+            let rangeText
+            if (rangeKm < 1) {
+                rangeText = 'RANGE: ' + Math.round(rangeKm * 1000) + 'm'
+            } else {
+                rangeText = 'RANGE: ' + rangeKm.toFixed(1) + 'km'
+            }
+            ctx.fillStyle = 'rgba(43,37,32,0.6)'
+            ctx.font = '10px "Space Mono","Courier New",monospace'
+            ctx.textAlign = 'right'
+            ctx.textBaseline = 'bottom'
+            ctx.fillText(rangeText, w - 8, h - 6)
+
+            // ── Center label ──
+            ctx.fillStyle = 'rgba(43,37,32,0.5)'
+            ctx.font = '8px "Space Mono","Courier New",monospace'
+            ctx.textAlign = 'center'
+            ctx.textBaseline = 'top'
+            ctx.fillText(center.lat.toFixed(4) + ', ' + center.lon.toFixed(4), cx, h - 16)
+
+            // Update coordinate label overlay
+            mapCoordLabel.textContent = rangeText
+
+            // NO spinning animation — render once, re-render on data changes
+        }
+
+        function startRadarAnimation() {
+            renderRadarFrame()
+        }
+
+        // ── Click detection on radar blips ──
+        mapCanvas.addEventListener('click', function(e) {
+            const rect = mapCanvas.getBoundingClientRect()
+            const x = e.clientX - rect.left
+            const y = e.clientY - rect.top
+
+            // Check if click is near any blip
+            for (const bp of blipPositions) {
+                const dx = x - bp.x
+                const dy = y - bp.y
+                const dist = Math.sqrt(dx * dx + dy * dy)
+                // Click tolerance: blip size + generous padding
+                if (dist <= bp.size + 10) {
+                    // Switch to LIST mode and open the ticket for this entry
+                    setMode('list')
+                    openEditForEvent(bp.index)
+                    renderRadarFrame()
+                    // Scroll to the corresponding list entry after a short delay
+                    setTimeout(() => scrollToListItem(bp.index), 100)
+                    return
+                }
+            }
+        })
+
+        // ── Hover cursor on radar blips ──
+        mapCanvas.addEventListener('mousemove', function(e) {
+            const rect = mapCanvas.getBoundingClientRect()
+            const x = e.clientX - rect.left
+            const y = e.clientY - rect.top
+            let overBlip = false
+            for (const bp of blipPositions) {
+                const dx = x - bp.x
+                const dy = y - bp.y
+                const dist = Math.sqrt(dx * dx + dy * dy)
+                if (dist <= bp.size + 10) {
+                    overBlip = true
+                    break
+                }
+            }
+            mapCanvas.style.cursor = overBlip ? 'pointer' : 'default'
+        })
+
+        // ════════════════════════════════════════════
+        // ── END RADAR MAP ──
+        // ════════════════════════════════════════════
+
+        // ── Scroll to a repo row by index ──
+        function scrollToListItem(index) {
+            const rows = repoList.querySelectorAll('.repo-row')
+            if (rows[index]) {
+                rows[index].scrollIntoView({ behavior: 'smooth', block: 'center' })
+                // Briefly flash highlight
+                rows[index].style.outline = '3px solid var(--accent-yellow)'
+                setTimeout(() => { rows[index].style.outline = '' }, 1500)
+            }
+        }
+
+        // ── Render: Repo List ──
+        function renderRepoList() {
+            const events = getEvents()
+            if (events.length === 0) {
+                repoList.innerHTML = '<div class="empty-state">NO PARTIES REGISTERED.<br>SWITCH TO EDIT TO CREATE ONE.</div>'
+            } else {
+                repoList.innerHTML = events.map((ev, i) => {
+                    const osmUrl = `https://www.openstreetmap.org/?mlat=${ev.coords[1]}&mlon=${ev.coords[0]}`
+                    const descTrunc = ev.description ? (ev.description.length > 60 ? ev.description.slice(0, 60) + '…' : ev.description) : ''
+                    return `<div class="repo-row chisel${state.selectedIndex === i ? ' selected' : ''}" data-index="${i}"><div class="repo-row-body">
+                        <span class="row-time">${ev.time}</span><span class="row-name">${ev.name}</span>
+                        <span class="row-coords">${ev.coords[0].toFixed(4)}, ${ev.coords[1].toFixed(4)}
+                            <a class="osm-link" href="${osmUrl}" target="_blank"><svg class="icon" viewBox="0 0 10 10"><use href="#icon-arrow"/></svg>OSM</a></span>
+                        <span class="row-index">#${i}</span>
+                        <button class="del-btn" data-index="${i}"><svg style="width:7px;height:7px" viewBox="0 0 10 10"><use href="#icon-del"/></svg> DEL</button>
+                        ${descTrunc ? '<span class="row-desc">' + descTrunc + '</span>' : ''}</div></div>`
+                }).join('')
+            }
+            repoList.querySelectorAll('.repo-row').forEach(row => {
+                row.addEventListener('click', function (e) { if (e.target.closest('a') || e.target.closest('.del-btn')) return; const idx = parseInt(this.dataset.index); openEditForEvent(idx) })
+            })
+            repoList.querySelectorAll('.del-btn').forEach(btn => {
+                btn.addEventListener('click', function (e) { e.stopPropagation(); const idx = parseInt(this.dataset.index); handleDelete(idx) })
+            })
+        }
+
+        // ── Edit: Open for existing event ──
+        function openEditForEvent(index) {
+            const events = getEvents()
+            state.selectedIndex = index; state.editIsNew = false; state.showTicket = true; state.checked = false
+            const ev = events[index]
+            inputName.value = ev.name; inputTime.value = ev.time
+            inputCoords.value = ev.coords[0].toFixed(5) + ', ' + ev.coords[1].toFixed(5)
+            inputDesc.value = ev.description || ''
+            // Show ticket in LIST mode
+            const editLabel = document.getElementById('edit-mode-label')
+            if (editLabel) editLabel.textContent = 'EDIT: ' + ev.name
+            setMode('list')
+            renderTicket()
+            showTicketInView()
+            renderRepoList()
+            renderRadarFrame()
+        }
+
+        // ── Edit: Open for new event ──
+        function openEditForNew() {
+            state.selectedIndex = null; state.editIsNew = true; state.showTicket = false; state.checked = false
+            inputName.value = ''; inputTime.value = ''; inputCoords.value = ''; inputDesc.value = ''
+            const editLabel = document.getElementById('edit-mode-label')
+            if (editLabel) editLabel.textContent = 'NEW EVENT'
+            setMode('edit')
+            inputName.focus()
+        }
+
+        // ── Edit: Handle update (writes to Yjs) ──
+        function handleUpdate() {
+            const name = inputName.value.trim() || 'UNTITLED', time = inputTime.value.trim() || '00:00'
+            const parts = inputCoords.value.trim().split(',').map(s => parseFloat(s.trim()))
+            let lon = parts[0], lat = parts[1]
+            if (isNaN(lon) || isNaN(lat)) { lon = -74.0; lat = 40.71 }
+            const coords = [lon, lat]
+            const description = inputDesc.value.trim()
+
+            ydoc.transact(() => {
+                if (state.editIsNew) {
+                    const ym = new Y.Map()
+                    ym.set('name', name)
+                    ym.set('time', time)
+                    const yc = new Y.Array()
+                    yc.push(coords)
+                    ym.set('coords', yc)
+                    ym.set('description', description)
+                    yparties.push([ym])
+                    state.selectedIndex = yparties.length - 1
+                } else if (state.selectedIndex !== null) {
+                    const ym = yparties.get(state.selectedIndex)
+                    if (ym) {
+                        ym.set('name', name)
+                        ym.set('time', time)
+                        const yc = ym.get('coords')
+                        if (yc) {
+                            yc.delete(0, yc.length)
+                            yc.push(coords)
+                        }
+                        ym.set('description', description)
+                    }
+                }
+            })
+
+            state.showTicket = true; state.checked = false; state.editIsNew = false
+            confirmation.classList.remove('visible')
+            // Switch to list mode and show ticket
+            setMode('list')
+            renderRepoList(); renderTicket()
+            showTicketInView()
+        }
+
+        // ── Render: Ticket ──
+        function renderTicket() {
+            if (!state.showTicket || state.selectedIndex === null) { hideTicketInView(); return }
+            const events = getEvents()
+            const ev = events[state.selectedIndex]
+            if (!ev) { hideTicketInView(); return }
+            $('#ticket-name').textContent = ev.name
+            $('#ticket-code').textContent = generateCode(ev)
+            $('#ticket-time').textContent = 'TIME: ' + ev.time
+            const coordSpan = document.querySelector('#ticket-coords span')
+            if (coordSpan) coordSpan.textContent = 'GPS: ' + ev.coords[0].toFixed(5) + ', ' + ev.coords[1].toFixed(5)
+            ticketOsmLink.href = `https://www.openstreetmap.org/?mlat=${ev.coords[1]}&mlon=${ev.coords[0]}`
+            $('#ticket-desc').textContent = ev.description || ''
+        }
+
+        function generateCode(ev) {
+            const h = Math.abs(ev.name.split('').reduce((a, c) => a + c.charCodeAt(0), 0)).toString(16).toUpperCase().slice(-6)
+            const m = Math.abs(Math.round(ev.coords[0] * 10000 + ev.coords[1] * 10000)).toString(16).toUpperCase().slice(-4)
+            return 'NLP-' + h + '-' + m
+        }
+
+        // ── Delete ──
+        function handleDelete(index) {
+            ydoc.transact(() => { yparties.delete(index, 1) })
+            state.selectedIndex = null; state.showTicket = false; state.checked = false; state.editIsNew = false
+            confirmation.classList.remove('visible')
+            hideTicketInView()
+            renderRepoList()
+            renderRadarFrame()
+        }
+
+        // ── Check In ──
+        function handleCheckIn() {
+            state.checked = true; ticketView.style.display = 'none'; confirmation.classList.add('visible')
+            renderRepoList()
+        }
+
+        // ── Back button ──
+        btnBack.addEventListener('click', () => {
+            state.showTicket = false; state.selectedIndex = null
+            confirmation.classList.remove('visible')
+            hideTicketInView()
+            renderRepoList()
+            renderRadarFrame()
+        })
+
+        // ── EXPORT: Encode Yjs state as base64 (instant, always works) ──
+        function generateB64Export() {
+            const update = Y.encodeStateAsUpdate(ydoc)
+            let binary = ''
+            update.forEach(b => { binary += String.fromCharCode(b) })
+            return btoa(binary)
+        }
+
+        // ── EXPORT: Start WebTorrent seeding ──
+        function handleWTExport() {
+            const client = getWT()
+            if (!client) {
+                exportStatus.textContent = 'WebTorrent unavailable'
+                exportStatus.className = 'status-text error'
+                return
+            }
+
+            // Remove previous seed torrent
+            if (currentSeed) {
+                try { client.remove(currentSeed.infoHash) } catch (e) { /* ignore */ }
+                currentSeed = null
+            }
+
+            exportMagnetSection.style.display = 'none'
+            magnetDisplay.textContent = ''
+            exportLog.innerHTML = ''
+            exportStatus.textContent = 'Encoding CRDT state...'
+            exportStatus.className = 'status-text loading'
+            logTo(exportLog, 'Starting seed...', 'log-warn')
+
+            const update = Y.encodeStateAsUpdate(ydoc)
+            const blob = new Blob([update], { type: 'application/octet-stream' })
+            const fileName = 'nlp-parties-' + Date.now() + '.bin'
+
+            exportStatus.textContent = 'Seeding via WebTorrent...'
+            logTo(exportLog, 'Creating torrent with ' + WT_TRACKERS.length + ' tracker(s)')
+
+            const seedOpts = {
+                name: fileName,
+                announce: WT_TRACKERS,
+            }
+
+            client.seed(blob, seedOpts, torrent => {
+                currentSeed = torrent
+                magnetDisplay.textContent = torrent.magnetURI
+                exportMagnetSection.style.display = 'block'
+                exportStatus.textContent = 'Seeding \u25CF 0 peer(s)'
+                exportStatus.className = 'status-text success'
+                logTo(exportLog, 'Seeding! infoHash: ' + torrent.infoHash.slice(0,12) + '...', 'log-ok')
+                logTo(exportLog, 'Magnet URI ready — copy and share')
+
+                // Track peer connections
+                torrent.on('wire', wire => {
+                    logTo(exportLog, 'Peer connected: ' + (wire.peerId || 'unknown').slice(0,8), 'log-ok')
+                    exportStatus.textContent = 'Seeding \u25CF ' + torrent.numPeers + ' peer(s)'
+                })
+
+                torrent.on('warning', msg => {
+                    logTo(exportLog, 'Warn: ' + msg, 'log-warn')
+                })
+
+                torrent.on('error', err => {
+                    exportStatus.textContent = 'Error: ' + err.message
+                    exportStatus.className = 'status-text error'
+                    logTo(exportLog, 'Error: ' + err.message, 'log-err')
+                })
+
+                // Update peer count periodically
+                const peerInterval = setInterval(() => {
+                    if (!currentSeed || currentSeed.infoHash !== torrent.infoHash) {
+                        clearInterval(peerInterval); return
+                    }
+                    exportStatus.textContent = 'Seeding \u25CF ' + torrent.numPeers + ' peer(s)'
+                }, 3000)
+            })
+
+            client.on('error', err => {
+                exportStatus.textContent = 'Error: ' + err.message
+                exportStatus.className = 'status-text error'
+                logTo(exportLog, 'Client error: ' + err.message, 'log-err')
+            })
+        }
+
+        // ── Copy to clipboard (generic) ──
+        function copyToClipboard(text, btn) {
+            if (!text) return
+            const orig = btn.textContent
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(() => {
+                    btn.textContent = 'COPIED'
+                    setTimeout(() => { btn.textContent = orig }, 2000)
+                }).catch(fallback)
+            } else {
+                fallback()
+            }
+            function fallback() {
+                const ta = document.createElement('textarea')
+                ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'
+                document.body.appendChild(ta); ta.select()
+                document.execCommand('copy'); document.body.removeChild(ta)
+                btn.textContent = 'COPIED'
+                setTimeout(() => { btn.textContent = orig }, 2000)
+            }
+        }
+
+        // ── IMPORT: Base64 merge (instant, always works) ──
+        function handleB64Import() {
+            const b64 = importB64Input.value.trim()
+            if (!b64) {
+                importB64Status.textContent = 'Paste a base64 string first'
+                importB64Status.className = 'status-text error'
+                return
+            }
+            try {
+                const binary = atob(b64)
+                const bytes = new Uint8Array(binary.length)
+                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+
+                ydoc.transact(() => {
+                    Y.applyUpdate(ydoc, bytes)
+                })
+
+                importB64Status.textContent = 'Merge complete!'
+                importB64Status.className = 'status-text success'
+
+                state.selectedIndex = null; state.showTicket = false; state.checked = false
+                confirmation.classList.remove('visible')
+
+            } catch (e) {
+                importB64Status.textContent = 'Error: Invalid base64 data — ' + e.message
+                importB64Status.className = 'status-text error'
+            }
+        }
+
+        // ── Helper: get blob from WebTorrent file (v1/v2 compat) ──
+        async function getFileBlob(file) {
+            if (typeof file.blob === 'function') {
+                return await file.blob()
+            }
+            return new Promise((resolve, reject) => {
+                file.getBlob((err, blob) => {
+                    if (err) reject(err)
+                    else resolve(blob)
+                })
+            })
+        }
+
+        // ── IMPORT: WebTorrent download and merge ──
+        async function doImport() {
+            const magnetURI = importInput.value.trim()
+            if (!magnetURI) {
+                importStatus.textContent = 'Enter a magnet URI'
+                importStatus.className = 'status-text error'
+                return
+            }
+
+            const client = getWT()
+            if (!client) {
+                importStatus.textContent = 'WebTorrent unavailable'
+                importStatus.className = 'status-text error'
+                return
+            }
+
+            importLog.innerHTML = ''
+            importStatus.textContent = 'Connecting to trackers...'
+            importStatus.className = 'status-text loading'
+            btnDownload.disabled = true
+            logTo(importLog, 'Adding torrent: ' + magnetURI.slice(0, 60) + '...', 'log-warn')
+
+            // Timeout after 90s
+            const timeoutId = setTimeout(() => {
+                importStatus.textContent = 'Timeout: No peers found. Try BASE64 tab instead.'
+                importStatus.className = 'status-text error'
+                btnDownload.disabled = false
+                logTo(importLog, 'Timed out after 90s', 'log-err')
+            }, 90000)
+
+            try {
+                const addOpts = {
+                    announce: WT_TRACKERS,
+                }
+
+                client.add(magnetURI, addOpts, torrent => {
+                    clearTimeout(timeoutId)
+                    importStatus.textContent = 'Metadata received — downloading... 0%'
+                    importStatus.className = 'status-text loading'
+                    logTo(importLog, 'Torrent ready! ' + torrent.files.length + ' file(s), ' + torrent.length + ' bytes', 'log-ok')
+
+                    // Log tracker events
+                    torrent.on('warning', msg => {
+                        logTo(importLog, 'Warn: ' + msg, 'log-warn')
+                    })
+
+                    torrent.on('wire', wire => {
+                        logTo(importLog, 'Peer found: ' + (wire.peerId || '').slice(0,8), 'log-ok')
+                    })
+
+                    torrent.on('download', () => {
+                        importStatus.textContent = 'Downloading... ' + Math.round(torrent.progress * 100) + '%'
+                    })
+
+                    torrent.on('done', async () => {
+                        importStatus.textContent = 'Processing CRDT data...'
+                        importStatus.className = 'status-text loading'
+                        logTo(importLog, 'Download complete, parsing CRDT...', 'log-ok')
+
+                        try {
+                            const file = torrent.files[0]
+                            const blob = await getFileBlob(file)
+                            const buffer = await blob.arrayBuffer()
+                            const update = new Uint8Array(buffer)
+
+                            ydoc.transact(() => {
+                                Y.applyUpdate(ydoc, update)
+                            })
+
+                            importStatus.textContent = 'Import complete!'
+                            importStatus.className = 'status-text success'
+                            logTo(importLog, 'CRDT merged successfully!', 'log-ok')
+
+                            // Reset UI state
+                            state.selectedIndex = null
+                            state.showTicket = false
+                            state.checked = false
+                            confirmation.classList.remove('visible')
+
+                            setTimeout(() => {
+                                try { client.remove(torrent.infoHash) } catch (e) { /* ignore */ }
+                                btnDownload.disabled = false
+                            }, 2500)
+                        } catch (e) {
+                            importStatus.textContent = 'Error: Invalid CRDT data'
+                            importStatus.className = 'status-text error'
+                            logTo(importLog, 'Parse error: ' + e.message, 'log-err')
+                            btnDownload.disabled = false
+                        }
+                    })
+
+                    torrent.on('error', err => {
+                        clearTimeout(timeoutId)
+                        importStatus.textContent = 'Error: ' + err.message
+                        importStatus.className = 'status-text error'
+                        logTo(importLog, 'Torrent error: ' + err.message, 'log-err')
+                        btnDownload.disabled = false
+                    })
+                })
+            } catch (e) {
+                clearTimeout(timeoutId)
+                importStatus.textContent = 'Error: ' + e.message
+                importStatus.className = 'status-text error'
+                logTo(importLog, 'Add error: ' + e.message, 'log-err')
+                btnDownload.disabled = false
+            }
+        }
+
+        // ── Event Listeners ──
+        btnUpdate.addEventListener('click', handleUpdate)
+        btnCheckin.addEventListener('click', handleCheckIn)
+        document.getElementById('btn-add-new').addEventListener('click', openEditForNew)
+        btnCopyMagnet.addEventListener('click', () => copyToClipboard(magnetDisplay.textContent, btnCopyMagnet))
+        btnCopyB64.addEventListener('click', () => copyToClipboard(b64Display.textContent, btnCopyB64))
+        btnDownload.addEventListener('click', doImport)
+        btnImportB64.addEventListener('click', handleB64Import)
+
+        // ── Tab switching ──
+        function setupTabs(prefix, onSwitch) {
+            const tabBtns = document.querySelectorAll('.tab-btn[id^="tab-' + prefix + '-"]')
+            tabBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    tabBtns.forEach(b => b.classList.remove('active'))
+                    btn.classList.add('active')
+                    const tab = btn.dataset.tab
+                    const b64Sec = document.getElementById(prefix + '-b64-section')
+                    const wtSec = document.getElementById(prefix + '-wt-section')
+                    if (b64Sec) b64Sec.style.display = tab === 'b64' ? '' : 'none'
+                    if (wtSec) wtSec.style.display = tab === 'wt' ? '' : 'none'
+                    if (onSwitch) onSwitch(tab)
+                })
+            })
+        }
+        setupTabs('export', tab => { if (tab === 'wt') handleWTExport() })
+        setupTabs('import')
+
+        ;[inputName, inputTime, inputCoords, inputDesc].forEach(inp => {
+            inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') handleUpdate() })
+        })
+
+        importInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') doImport() })
+        importB64Input.addEventListener('keydown', function (e) { if (e.key === 'Enter') handleB64Import() })
+
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') {
+                state.selectedIndex = null; state.editIsNew = false; state.showTicket = false
+                confirmation.classList.remove('visible')
+                hideTicketInView()
+                setMode('list')
+                renderRepoList()
+            }
+        })
+
+        // ── Initialize ──
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                renderRepoList()
+                startRadarAnimation()
+                // Hide loading overlay
+                loadingOverlay.classList.add('hidden')
+                setTimeout(() => { loadingOverlay.style.display = 'none' }, 500)
+            })
+        })
+    </script>
+</body>
+</html>
